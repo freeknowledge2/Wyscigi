@@ -1,10 +1,8 @@
 import random
 import string
 
-literki = string.ascii_letters + "  \n"
+literki = string.ascii_letters
 print("Ile literek wylosować?")
-odpowiedz = input()
-
-    ile = int(odpowiedz)
-    for i in range(ile):
-        print(random.choice(literki), end="")
+ile = int(input())
+for i in range(ile):
+    print(random.choice(literki))
