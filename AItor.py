@@ -248,57 +248,38 @@ class Car:
 
 class Track:
     """Klasa reprezentująca tor wyścigowy"""
-    
+
     def __init__(self):
         # Parametry
         self.base_track_width = 70  # pół-szerokość toru (od środka do krawędzi)
         self.control_points = self._create_control_points()
-        self.center_points = self._interpolate_centerline(self.control_points, samples_per_segment=25)
+        self.center_points = self._interpolate_centerline(self.control_points, samples_per_segment=40)
+        self.center_points = self._smooth_centerline(self.center_points, iterations=2)
         self.outer_points, self.inner_points = self._compute_boundaries(self.center_points, self.base_track_width)
         self.finish_line = self.calculate_finish_line()
-        # Precompute polygons for collision
         self.track_polygon = self.outer_points + list(reversed(self.inner_points))
-        # Curvature for decorative curbs
         self.curvatures = self._compute_curvatures(self.center_points)
-        # Pre-render surface & mask for fast drawing / collision
         self.surface, self.mask = self._build_surface()
-        # Cache dashed center line segments
         self.dash_segments = self._build_center_dashes()
-    
+
     # ----------- Track Generation Helpers -----------
     def _create_control_points(self) -> List[Point]:
-        """Zdefiniuj surowe punkty kontrolne toru (zamknięta pętla)"""
         cx, cy = SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2
         pts = [
-            (cx - 320, cy + 180),
-            (cx - 150, cy + 190),
-            (cx + 40, cy + 200),
-            (cx + 260, cy + 160),
-            (cx + 340, cy + 60),
-            (cx + 360, cy - 40),
-            (cx + 320, cy - 160),
-            (cx + 200, cy - 230),
-            (cx + 40, cy - 250),
-            (cx - 140, cy - 240),
-            (cx - 300, cy - 200),
-            (cx - 370, cy - 120),
-            (cx - 380, cy, ),
-            (cx - 360, cy + 100),
+            (cx - 320, cy + 180), (cx - 150, cy + 190), (cx + 40, cy + 200), (cx + 260, cy + 160),
+            (cx + 340, cy + 60), (cx + 360, cy - 40), (cx + 320, cy - 160), (cx + 200, cy - 230),
+            (cx + 40, cy - 250), (cx - 140, cy - 240), (cx - 300, cy - 200), (cx - 370, cy - 120),
+            (cx - 380, cy), (cx - 360, cy + 100)
         ]
         return [Point(x, y) for x, y in pts]
 
     def _catmull_rom(self, p0, p1, p2, p3, t):
         t2 = t * t
         t3 = t2 * t
-        return (
-            0.5 * ((2 * p1) + (-p0 + p2) * t +
-                   (2*p0 - 5*p1 + 4*p2 - p3) * t2 +
-                   (-p0 + 3*p1 - 3*p2 + p3) * t3)
-        )
+        return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2*p0 - 5*p1 + 4*p2 - p3) * t2 + (-p0 + 3*p1 - 3*p2 + p3) * t3)
 
     def _interpolate_centerline(self, control_points: List[Point], samples_per_segment: int = 20) -> List[Point]:
         pts = control_points[:]
-        # Ensure closed loop by extending for spline endpoints
         extended = [pts[-2], pts[-1]] + pts + [pts[0], pts[1]]
         result: List[Point] = []
         for i in range(2, len(extended) - 2):
@@ -310,15 +291,30 @@ class Track:
                 result.append(Point(x, y))
         return result
 
+    def _smooth_centerline(self, pts: List[Point], iterations: int = 1) -> List[Point]:
+        if not pts:
+            return pts
+        n = len(pts)
+        work = pts[:]
+        for _ in range(iterations):
+            new_pts: List[Point] = []
+            for i in range(n):
+                p_prev = work[(i - 1) % n]
+                p = work[i]
+                p_next = work[(i + 1) % n]
+                nx = (p_prev.x + p.x * 2 + p_next.x) / 4.0
+                ny = (p_prev.y + p.y * 2 + p_next.y) / 4.0
+                new_pts.append(Point(nx, ny))
+            work = new_pts
+        return work
+
     def _compute_boundaries(self, center: List[Point], half_width: float) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
-        outer = []
-        inner = []
+        outer, inner = [], []
         n = len(center)
         for i in range(n):
             p_prev = center[i - 1]
             p = center[i]
             p_next = center[(i + 1) % n]
-            # Tangent
             tx = p_next.x - p_prev.x
             ty = p_next.y - p_prev.y
             length = math.hypot(tx, ty) or 1.0
@@ -329,33 +325,27 @@ class Track:
         return outer, inner
 
     def _compute_curvatures(self, center: List[Point]) -> List[float]:
-        curv = []
+        curv: List[float] = []
         n = len(center)
         for i in range(n):
             p_prev = center[i - 1]
             p = center[i]
             p_next = center[(i + 1) % n]
-            # Using angle change as curvature proxy
-            v1x = p.x - p_prev.x
-            v1y = p.y - p_prev.y
-            v2x = p_next.x - p.x
-            v2y = p_next.y - p.y
+            v1x = p.x - p_prev.x; v1y = p.y - p_prev.y
+            v2x = p_next.x - p.x; v2y = p_next.y - p.y
             l1 = math.hypot(v1x, v1y) or 1
             l2 = math.hypot(v2x, v2y) or 1
-            v1x /= l1; v1y /= l1
-            v2x /= l2; v2y /= l2
+            v1x /= l1; v1y /= l1; v2x /= l2; v2y /= l2
             dot = max(-1.0, min(1.0, v1x * v2x + v1y * v2y))
             angle = math.acos(dot)
             curv.append(angle)
         return curv
 
-    # ----------- Collision Helpers -----------
     def _point_in_polygon(self, x: float, y: float, poly: List[Tuple[float, float]]) -> bool:
         inside = False
         j = len(poly) - 1
         for i in range(len(poly)):
-            xi, yi = poly[i]
-            xj, yj = poly[j]
+            xi, yi = poly[i]; xj, yj = poly[j]
             intersect = ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-9) + xi)
             if intersect:
                 inside = not inside
@@ -363,47 +353,42 @@ class Track:
         return inside
 
     def is_on_track(self, x: float, y: float) -> bool:
-        ix = int(x)
-        iy = int(y)
+        ix = int(x); iy = int(y)
         if ix < 0 or iy < 0 or ix >= SCREEN_WIDTH or iy >= SCREEN_HEIGHT:
             return False
         try:
             return self.mask.get_at((ix, iy)) == 1
         except Exception:
             return False
-    
+
     def calculate_finish_line(self) -> Tuple[Point, Point]:
-        """Oblicz linię mety"""
         if len(self.center_points) < 2:
             return Point(100, 100), Point(100, 140)
-        
-        # Start na pierwszym punkcie center line
         start = self.center_points[0]
         next_point = self.center_points[5]
-        
-        # Wektor prostopadły do kierunku toru
         dx = next_point.x - start.x
         dy = next_point.y - start.y
         length = math.sqrt(dx*dx + dy*dy)
-        
         if length > 0:
-            # Znormalizowany wektor prostopadły
-            perp_x = -dy / length * 40  # 40 to połowa szerokości toru
+            perp_x = -dy / length * 40
             perp_y = dx / length * 40
             line_start = Point(start.x + perp_x, start.y + perp_y)
             line_end = Point(start.x - perp_x, start.y - perp_y)
             return line_start, line_end
-        # fallback
         return Point(start.x, start.y - 40), Point(start.x, start.y + 40)
 
     def _build_surface(self):
         surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        # asfalt
-        pygame.draw.polygon(surf, TRACK_GRAY, self.track_polygon)
-        # krawędzie
+        path_points = [(p.x, p.y) for p in self.center_points]
+        track_width_px = int(self.base_track_width * 2)
+        if track_width_px % 2 == 1:
+            track_width_px += 1
+        pygame.draw.lines(surf, TRACK_GRAY, True, path_points, track_width_px)
+        circle_r = int(self.base_track_width)
+        for p in self.center_points:
+            pygame.draw.circle(surf, TRACK_GRAY, (int(p.x), int(p.y)), circle_r)
         pygame.draw.lines(surf, WHITE, True, self.outer_points, 4)
         pygame.draw.lines(surf, WHITE, True, self.inner_points, 4)
-        # krawężniki punktowe (tylko raz narysowane)
         for i, p in enumerate(self.center_points):
             if self.curvatures[i] > 0.08 and i % 3 == 0:
                 opx, opy = self.outer_points[i]
@@ -411,20 +396,17 @@ class Track:
                 color = RED if (i // 2) % 2 == 0 else WHITE
                 pygame.draw.circle(surf, color, (int(opx), int(opy)), 4)
                 pygame.draw.circle(surf, color, (int(ipx), int(ipy)), 4)
-        # subtelne plamy tekstury
         for i in range(0, len(self.center_points), 55):
             p = self.center_points[i]
-            shade = (95 + (i * 17) % 25, ) * 3
+            shade_val = 95 + (i * 17) % 25
+            shade = (shade_val, shade_val, shade_val)
             pygame.draw.circle(surf, shade, (int(p.x), int(p.y)), 18, width=1)
         mask = pygame.mask.from_surface(surf)
         return surf, mask
 
     def _build_center_dashes(self):
         dashes = []
-        dash_len = 25
-        gap = 25
-        acc = 0.0
-        draw_dash = True
+        dash_len = 25; gap = 25; acc = 0.0; draw_dash = True
         last = self.center_points[0]
         for p in self.center_points[1:]:
             seg_len = math.hypot(p.x - last.x, p.y - last.y)
@@ -432,47 +414,34 @@ class Track:
                 dashes.append(((last.x, last.y), (p.x, p.y)))
             acc += seg_len
             if draw_dash and acc >= dash_len:
-                acc = 0
-                draw_dash = False
+                acc = 0; draw_dash = False
             elif (not draw_dash) and acc >= gap:
-                acc = 0
-                draw_dash = True
+                acc = 0; draw_dash = True
             last = p
         return dashes
-    
+
     def draw(self, screen: pygame.Surface):
-        """Szybkie rysowanie toru (prerender)"""
         if len(self.center_points) < 2:
             return
         screen.blit(self.surface, (0, 0))
-        # Środkowa linia (z cache)
         for a, b in self.dash_segments:
             pygame.draw.line(screen, YELLOW, a, b, 2)
-        # Linia mety w kratkę
         line_start, line_end = self.finish_line
         segments = 10
         for i in range(segments):
-            t0 = i / segments
-            t1 = (i + 1) / segments
+            t0 = i / segments; t1 = (i + 1) / segments
             sx = line_start.x + (line_end.x - line_start.x) * t0
             sy = line_start.y + (line_end.y - line_start.y) * t0
             ex = line_start.x + (line_end.x - line_start.x) * t1
             ey = line_start.y + (line_end.y - line_start.y) * t1
             color = WHITE if i % 2 == 0 else BLACK
             pygame.draw.line(screen, color, (sx, sy), (ex, ey), 8)
-        
-        # Siatka startowa
-        # Użyj prostopadłego wektora
-        dx = line_end.x - line_start.x
-        dy = line_end.y - line_start.y
-        L = math.hypot(dx, dy) or 1
-        nx = dx / L
-        ny = dy / L
+        dx = line_end.x - line_start.x; dy = line_end.y - line_start.y
+        L = math.hypot(dx, dy) or 1; nx = dx / L; ny = dy / L
         grid_rows = 5
         for r in range(grid_rows):
             gx0 = (line_start.x + line_end.x)/2 + nx * (r * 18)
             gy0 = (line_start.y + line_end.y)/2 + ny * (r * 18)
-            # małe poprzeczne
             pygame.draw.line(screen, (200,200,200), (gx0 - ny*30, gy0 + nx*30), (gx0 + ny*30, gy0 - nx*30), 2)
 
 class Game:
