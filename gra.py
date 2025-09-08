@@ -385,21 +385,55 @@ class Driver:
 			# fallback random jitter
 			steer = random.uniform(-0.8, 0.8) * dt
 			ang_step = steer
-		# speed adjustments (px/s) influenced by aggressiveness and caution
-		# reduce base target so drivers are overall slower
+		# Enhanced speed adjustments with trajectory prediction
+		# reduce base target so drivers are overall slower but smarter
 		target_speed = 140.0 * self.aggressiveness
+		
+		# Cornering prediction: look ahead to anticipate turns and slow down early
+		if waypoints and len(waypoints) > 1:
+			current_wp_idx = self.wp_index % len(waypoints)
+			# look ahead 2-3 waypoints to predict cornering needs
+			lookahead_indices = []
+			for offset in range(1, min(4, len(waypoints) - current_wp_idx)):
+				lookahead_indices.append((current_wp_idx + offset) % len(waypoints))
+			
+			if lookahead_indices:
+				# calculate required turning angles for upcoming waypoints
+				total_turn_ahead = 0.0
+				for i, wp_idx in enumerate(lookahead_indices):
+					if wp_idx < len(waypoints) - 1:  # not the last waypoint
+						curr_wp = waypoints[wp_idx]
+						next_wp = waypoints[(wp_idx + 1) % len(waypoints)]
+						prev_wp = waypoints[wp_idx - 1] if wp_idx > 0 else waypoints[wp_idx]
+						
+						# calculate the angle change between segments
+						ang1 = math.atan2(curr_wp[1] - prev_wp[1], curr_wp[0] - prev_wp[0])
+						ang2 = math.atan2(next_wp[1] - curr_wp[1], next_wp[0] - curr_wp[0])
+						turn_angle = abs((ang2 - ang1 + math.pi) % (2*math.pi) - math.pi)
+						
+						# weight turns by proximity (closer turns matter more)
+						weight = 1.0 / (i + 1)
+						total_turn_ahead += turn_angle * weight
+				
+				# adjust speed based on upcoming turns
+				turn_speed_factor = max(0.6, 1.0 - (total_turn_ahead / math.pi) * 0.4)
+				target_speed *= turn_speed_factor
+		
 		# cornering slow-down: if steering large, reduce target speed
-		steer_penalty = abs(steer) * (1.0 + (1.0 - self.caution)) * 80.0
+		steer_penalty = abs(steer) * (1.0 + (1.0 - self.caution)) * 70.0  # reduced penalty for smoother flow
 		target_speed = max(70.0, target_speed - steer_penalty)
+		
 		# cap to driver's maximum speed
 		target_speed = min(target_speed, getattr(self, 'max_speed', 200.0))
+		
 		# slow down when approaching finish zone for a safer final approach
 		dist_to_finish = math.hypot(FINISH_ZONE.centerx - self.x, FINISH_ZONE.centery - self.y)
 		if dist_to_finish < 300.0:
 			approach_base = 60.0 + 30.0 * self.aggressiveness
 			target_speed = min(target_speed, approach_base)
-		# accelerate/decelerate toward target (gentler accel)
-		accel = 140.0 * (0.6 + 0.6 * self.aggressiveness)
+		
+		# accelerate/decelerate toward target (gentler accel for smoother motion)
+		accel = 120.0 * (0.6 + 0.6 * self.aggressiveness)
 		if self.speed < target_speed:
 			self.speed = min(target_speed, self.speed + accel * dt)
 		else:
