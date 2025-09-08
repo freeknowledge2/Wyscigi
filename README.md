@@ -79,3 +79,48 @@ Możliwe ulepszenia:
 4. **Różne tory**: Generuj losowe tory dla każdej generacji
 5. **Zapisywanie**: Zapisuj najlepsze sieci do pliku
 6. **Statystyki**: Zbieraj dane o wydajności generacji
+
+## (NOWE) Gra 3D w Ursina
+
+Dodano plik `race3d_ursina.py` z wersją 3D gry spełniającą wymagania:
+
+- Silnik: Ursina (pip install ursina)
+- Tor 3D: Eliptyczny, zbudowany z segmentowych barierek (Entity z collider='box').
+- Samochody (N konfigurowalne) startują automatycznie i są sterowane przez sieci neuronowe uczone algorytmem ewolucyjnym.
+- Fizyka: proste przyspieszenie, tarcie, skręt zależny od prędkości, kolizje z bandami -> dyskwalifikacja (auto znika / wyłączone).
+- Meta: wykrycie pełnego okrążenia (progress >= 0.99) – pierwszy kończący wygrywa.
+- Kamera: domyślnie widok z góry; klawisz `C` przełącza na tryb śledzenia lidera.
+- Uczenie: po zakończeniu generacji (czas lub brak żywych aut) następuje selekcja, mutacje i kolejna generacja.
+
+### Uruchomienie 3D
+
+1. Zainstaluj zależności:
+```
+pip install ursina numpy
+```
+2. Uruchom:
+```
+python race3d_ursina.py
+```
+
+### Klawisze 3D
+- C – przełącz kamera (follow/top)
+- N – wymuś przejście do kolejnej generacji
+- ESC – wyjście
+
+### Parametry do zmiany (u góry pliku)
+- `NUM_CARS`, `GEN_TIME_SECONDS`, `TRACK_WIDTH`, `TURN_SPEED`, `MUTATION_RATE`, `MUTATION_STRENGTH` itd.
+
+### Sensory i AI (3D)
+- 10 promieni (raycast) 360° w płaszczyźnie poziomej.
+- Wejścia: znormalizowane odległości (0..1) do bariery lub maks. zasięgu.
+- Wyjścia sieci: [przyspiesz/hamuj, skręt_lewo, skręt_prawo].
+- Algorytm: prosty elitarny ewolucyjny – elita zachowana, reszta mutacje.
+
+### Możliwe rozszerzenia 3D
+1. Checkpointy i czas okrążenia.
+2. Wielookrążeniowe wyścigi.
+3. Różne generatory torów (proceduralnie zakręty, wzniesienia – dodając różne Y).
+4. Sieci głębsze lub PPO / DQN (wymagałoby dyskretyzacji lub wrappera środowiska).
+5. Zapisywanie champion.brain do pliku (pickle / npz) i wczytywanie przy starcie.
+

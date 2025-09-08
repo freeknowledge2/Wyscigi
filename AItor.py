@@ -15,7 +15,7 @@ PRETRAIN_EVENT_INTERVAL = 1    # co ile generacji pompować zdarzenia (1 = każd
 PRETRAIN_DRAW_INTERVAL = 5     # co ile generacji odświeżyć ekran (tekst postępu)
 
 # Nowe parametry rozgrywki
-ROUND_DURATION_SECONDS = 5      # długość jednej generacji w sekundach
+ROUND_DURATION_SECONDS = 10      # długość jednej generacji w sekundach
 MIN_SPEED = 0.8                 # minimalna prędkość (brak pełnego zatrzymania)
 START_INITIAL_SPEED = 1.5       # początkowa prędkość startowa
 START_BOOST_FRAMES = 40         # ile pierwszych klatek wymuszać ruch do przodu
@@ -527,9 +527,14 @@ class Game:
             elif i < len(elite):
                 brain = elite[i].brain.copy()
             else:
-                parent = random.choice(elite)
-                brain = parent.brain.copy()
-                brain.mutate(mutation_rate=0.3, mutation_strength=0.5)
+                # Zabezpieczenie: jeśli elite jest puste, stwórz nową losową sieć
+                if elite:
+                    parent = random.choice(elite)
+                    brain = parent.brain.copy()
+                    brain.mutate(mutation_rate=0.3, mutation_strength=0.5)
+                else:
+                    # Stwórz całkiem nową losową sieć
+                    brain = NeuralNetwork()
             new_cars.append(self.create_car_from_brain(brain, i))
         self.cars = new_cars
         self.generation += 1
@@ -685,10 +690,239 @@ class Game:
             self.clock.tick(FPS)
         pygame.quit()
 
+
+
+
+# --- MENU SYSTEM ---
+import tkinter as tk
+from tkinter import filedialog
+
+class Menu:
+    def __init__(self, screen):
+        self.screen = screen
+        self.font = pygame.font.Font(None, 60)
+        self.small_font = pygame.font.Font(None, 32)
+        self.options = ["Zagraj", "Wybierz mapę"]
+        self.selected = 0
+        self.running = True
+        self.result = None
+    def draw(self):
+        self.screen.fill((30, 30, 30))
+        title = self.font.render("AI Racing - MENU", True, (255,255,255))
+        self.screen.blit(title, (self.screen.get_width()//2 - title.get_width()//2, 120))
+        for i, opt in enumerate(self.options):
+            color = (255,255,0) if i == self.selected else (200,200,200)
+            surf = self.small_font.render(opt, True, color)
+            self.screen.blit(surf, (self.screen.get_width()//2 - surf.get_width()//2, 250 + i*70))
+        pygame.display.flip()
+    def run(self):
+        clock = pygame.time.Clock()
+        while self.running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    self.result = None
+                elif event.type == pygame.KEYDOWN:
+                    if event.key in [pygame.K_UP, pygame.K_w]:
+                        self.selected = (self.selected - 1) % len(self.options)
+                    elif event.key in [pygame.K_DOWN, pygame.K_s]:
+                        self.selected = (self.selected + 1) % len(self.options)
+                    elif event.key in [pygame.K_RETURN, pygame.K_SPACE]:
+                        self.running = False
+                        self.result = self.selected
+            self.draw()
+            clock.tick(30)
+        return self.result
+
+# --- MAP LOADER ---
+def load_jpg_map():
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename(filetypes=[("JPG files", "*.jpg;*.jpeg")])
+    root.destroy()
+    if not file_path:
+        return None
+    img = pygame.image.load(file_path)
+    img = pygame.transform.scale(img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+    return img
+
+def pick_points_on_map(screen, map_img):
+    font = pygame.font.Font(None, 36)
+    drawing = False
+    path_points = []
+    
+    while True:
+        screen.blit(map_img, (0,0))
+        
+        # Rysuj instrukcje
+        if not path_points:
+            txt = font.render("Kliknij i przeciągnij myszką aby narysować trasę", True, (255,255,0))
+            screen.blit(txt, (30, 30))
+            txt2 = font.render("Naciśnij ENTER gdy skończysz", True, (255,255,0))
+            screen.blit(txt2, (30, 70))
+        else:
+            txt = font.render(f"Punktów trasy: {len(path_points)}", True, (255,255,0))
+            screen.blit(txt, (30, 30))
+            txt2 = font.render("Naciśnij ENTER aby zakończyć lub kontynuuj rysowanie", True, (255,255,0))
+            screen.blit(txt2, (30, 70))
+        
+        # Rysuj narysowaną trasę
+        if len(path_points) > 1:
+            pygame.draw.lines(screen, (0, 255, 0), False, path_points, 5)
+        
+        # Rysuj punkty
+        for i, point in enumerate(path_points):
+            if i == 0:  # Start - zielony
+                pygame.draw.circle(screen, (0, 255, 0), point, 8)
+            elif i == len(path_points) - 1:  # Ostatni punkt - czerwony
+                pygame.draw.circle(screen, (255, 0, 0), point, 8)
+            else:  # Punkty pośrednie - żółte
+                pygame.draw.circle(screen, (255, 255, 0), point, 4)
+        
+        pygame.display.flip()
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Lewy przycisk
+                    drawing = True
+                    path_points.append(event.pos)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    drawing = False
+            elif event.type == pygame.MOUSEMOTION:
+                if drawing:
+                    # Dodaj punkt tylko jeśli jest wystarczająco daleko od ostatniego
+                    if not path_points or abs(event.pos[0] - path_points[-1][0]) > 10 or abs(event.pos[1] - path_points[-1][1]) > 10:
+                        path_points.append(event.pos)
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    if len(path_points) >= 2:
+                        return path_points
+                elif event.key == pygame.K_c:  # Clear - wyczyść trasę
+                    path_points = []
+
+# --- MODIFIED MAIN ---
 def main():
-    """Funkcja główna"""
-    game = Game()
-    game.run()
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    pygame.display.set_caption("AI Racing Game - Gra Wyścigowa z AI")
+    menu = Menu(screen)
+    choice = menu.run()
+    if choice == 0:
+        # Zagraj na domyślnej mapie
+        game = Game()
+        game.run()
+    elif choice == 1:
+        # Wybierz mapę
+        map_img = load_jpg_map()
+        if map_img is None:
+            return
+        path_points = pick_points_on_map(screen, map_img)
+        if not path_points or len(path_points) < 2:
+            return
+        start = path_points[0]
+        meta = path_points[-1]
+        # Stwórz niestandardowy tor na podstawie mapy JPG i narysowanej trasy
+        class CustomTrack(Track):
+            def __init__(self, map_img, path_points):
+                self.base_track_width = 70
+                self.map_img = map_img
+                self.path_points = path_points
+                self.start = path_points[0]
+                self.meta = path_points[-1]
+                
+                # Użyj narysowanej trasy jako center_points
+                self.center_points = [Point(p[0], p[1]) for p in path_points]
+                
+                # Oblicz boundaries na podstawie narysowanej trasy
+                if len(self.center_points) > 1:
+                    self.outer_points, self.inner_points = self._compute_boundaries(self.center_points, self.base_track_width)
+                else:
+                    self.outer_points = [(self.start[0]-70, self.start[1]), (self.meta[0]-70, self.meta[1])]
+                    self.inner_points = [(self.start[0]+70, self.start[1]), (self.meta[0]+70, self.meta[1])]
+                
+                self.finish_line = (Point(self.meta[0]-30, self.meta[1]), Point(self.meta[0]+30, self.meta[1]))
+                self.track_polygon = self.outer_points + list(reversed(self.inner_points))
+                self.curvatures = [0.0] * len(self.center_points)
+                self.surface, self.mask = self._build_surface()
+                self.dash_segments = []
+                
+            def _is_track_color(self, color):
+                """Sprawdza czy kolor to tor (szary) czy ściana"""
+                r, g, b = color[:3]
+                # Sprawdź czy kolor jest szary (R≈G≈B) z tolerancją
+                avg = (r + g + b) / 3
+                tolerance = 40
+                return (abs(r - avg) < tolerance and 
+                       abs(g - avg) < tolerance and 
+                       abs(b - avg) < tolerance and
+                       avg > 60)  # Nie za ciemny
+                
+            def _build_surface(self):
+                surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+                surf.blit(self.map_img, (0,0))
+                
+                # Rysuj narysowaną trasę AI
+                if len(self.center_points) > 1:
+                    path_points = [(p.x, p.y) for p in self.center_points]
+                    pygame.draw.lines(surf, (255,255,0), False, path_points, 3)
+                
+                mask = pygame.mask.from_surface(surf)
+                return surf, mask
+                
+            def is_on_track(self, x, y):
+                """Sprawdza czy pozycja jest na torze (szary kolor) z większą tolerancją"""
+                if x < 0 or y < 0 or x >= SCREEN_WIDTH or y >= SCREEN_HEIGHT:
+                    return False
+                try:
+                    pixel_color = self.map_img.get_at((int(x), int(y)))
+                    # Zwiększona tolerancja dla lepszej rozgrywki
+                    return self._is_track_color(pixel_color) or self._is_near_track(x, y)
+                except:
+                    return False
+                    
+            def _is_near_track(self, x, y):
+                """Sprawdza czy blisko jest tor (większa tolerancja)"""
+                for dx in [-5, 0, 5]:
+                    for dy in [-5, 0, 5]:
+                        try:
+                            nx, ny = int(x + dx), int(y + dy)
+                            if 0 <= nx < SCREEN_WIDTH and 0 <= ny < SCREEN_HEIGHT:
+                                pixel_color = self.map_img.get_at((nx, ny))
+                                if self._is_track_color(pixel_color):
+                                    return True
+                        except:
+                            continue
+                return False
+                    
+            def draw(self, screen):
+                screen.blit(self.surface, (0,0))
+                pygame.draw.circle(screen, (0,255,0), self.start, 12)
+                pygame.draw.circle(screen, (255,0,0), self.meta, 12)
+        class CustomGame(Game):
+            def __init__(self, map_img, path_points):
+                pygame.init()
+                self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+                pygame.display.set_caption("AI Racing Game - Custom Map")
+                self.clock = pygame.time.Clock()
+                self.font = pygame.font.Font(None, 24)
+                self.small_font = pygame.font.Font(None, 16)
+                self.track = CustomTrack(map_img, path_points)
+                self.cars = self.create_cars()
+                self.generation = 1
+                self.time_elapsed = 0
+                self.max_time = ROUND_DURATION_SECONDS * FPS
+                self.running = True
+                self.best_score = 0.0
+                self.best_generation = 1
+                self.champion_brain = None
+                self.pretrained = False
+                self.pretrain(PRETRAIN_GENERATIONS)
+        # Po narysowaniu trasy, uruchom naukę AI na tej mapie
+        custom_game = CustomGame(map_img, path_points)
+        custom_game.run()
 
 if __name__ == "__main__":
     main()
